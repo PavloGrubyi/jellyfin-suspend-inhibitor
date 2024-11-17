@@ -45,7 +45,7 @@ Note: If you lose the API key, you can't recover it - you'll need to create a ne
 
 1. Download the installation script:
 ```bash
-curl -O https://raw.githubusercontent.com/yourusername/jellyfin-suspend-inhibitor/main/install.sh
+curl -O https://raw.githubusercontent.com/PavloGrubyi/jellyfin-suspend-inhibitor/main/install.sh
 chmod +x install.sh
 ```
 
