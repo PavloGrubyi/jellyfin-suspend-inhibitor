@@ -1,13 +1,17 @@
 #!/bin/bash
 
-# Jellyfin Suspend Inhibitor Installer
-# This script installs and configures the Jellyfin suspend inhibitor service
+# Jellyfin Suspend Inhibitor Installer (User Level)
+# This script installs and configures the jellyfin suspend inhibitor service for the current user
 
-# Check if running as root
-if [ "$EUID" -ne 0 ]; then
-    echo "Please run as root"
+# Check if running as root (we don't want that)
+if [ "$EUID" -eq 0 ]; then
+    echo "Please run this script as a normal user, not as root"
     exit 1
 fi
+
+# Create necessary directories
+mkdir -p ~/.local/bin
+mkdir -p ~/.config/systemd/user
 
 # Prompt for API key
 echo "Please enter your Jellyfin API key:"
@@ -23,13 +27,13 @@ fi
 echo "Installing Jellyfin Suspend Inhibitor..."
 
 # Create the inhibitor script
-cat > /usr/local/bin/jellyfin-inhibitor.sh << EOL
+cat > ~/.local/bin/jellyfin-inhibitor.sh << EOL
 #!/bin/bash
 
 # Enable logging
 exec 1> >(logger -s -t \$(basename \$0)) 2>&1
 
-INHIBITOR_TAG="jellyfin-playback-inhibitor"
+INHIBITOR_TAG="jellyfin-playback-inhibitor-\$USER"
 
 check_jellyfin_playback() {
     # Get active sessions from Jellyfin API
@@ -45,14 +49,14 @@ check_jellyfin_playback() {
 }
 
 cleanup_inhibitors() {
-    # Kill all existing jellyfin inhibitors
+    # Kill all existing jellyfin inhibitors for this user
     pkill -f "systemd-inhibit.*\$INHIBITOR_TAG"
 }
 
 create_inhibitor() {
     # Only create if no inhibitor exists
     if ! pgrep -f "systemd-inhibit.*\$INHIBITOR_TAG" >/dev/null; then
-        systemd-inhibit --what=sleep:idle --who="Jellyfin" \\
+        systemd-inhibit --what=sleep:idle --who="Jellyfin (\$USER)" \\
                        --why="Media playback in progress" \\
                        --mode=block \\
                        bash -c "echo \\\$\\\$ > /tmp/\$INHIBITOR_TAG.pid && exec sleep infinity" &
@@ -77,38 +81,42 @@ done
 EOL
 
 # Make the script executable
-chmod +x /usr/local/bin/jellyfin-inhibitor.sh
+chmod +x ~/.local/bin/jellyfin-inhibitor.sh
 
-# Create the systemd service
-cat > /etc/systemd/system/jellyfin-inhibitor.service << 'EOL'
+# Create the systemd user service
+cat > ~/.config/systemd/user/jellyfin-inhibitor.service << EOL
 [Unit]
 Description=Jellyfin Suspend Inhibitor
-After=network.target jellyfin.service
+After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/jellyfin-inhibitor.sh
+ExecStart=${HOME}/.local/bin/jellyfin-inhibitor.sh
 Restart=always
-User=root
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 EOL
 
-# Reload systemd, enable and start the service
-systemctl daemon-reload
-systemctl enable jellyfin-inhibitor
-systemctl start jellyfin-inhibitor
+# Enable user service lingering (allows the service to run even when user is not logged in)
+loginctl enable-linger "$USER"
+
+# Reload systemd user daemon
+systemctl --user daemon-reload
+
+# Enable and start the service
+systemctl --user enable jellyfin-inhibitor
+systemctl --user start jellyfin-inhibitor
 
 # Verify the service started successfully
-if systemctl is-active --quiet jellyfin-inhibitor; then
+if systemctl --user is-active --quiet jellyfin-inhibitor; then
     echo -e "\nInstallation completed successfully!"
     echo "The service is now running and will start automatically on boot."
-    echo -e "\nYou can check the status with: sudo systemctl status jellyfin-inhibitor"
-    echo "View the logs with: sudo journalctl -u jellyfin-inhibitor -f"
+    echo -e "\nYou can check the status with: systemctl --user status jellyfin-inhibitor"
+    echo "View the logs with: journalctl --user -u jellyfin-inhibitor -f"
 else
     echo -e "\nWarning: Service installation completed but the service failed to start."
-    echo "Please check the logs with: sudo journalctl -u jellyfin-inhibitor -f"
+    echo "Please check the logs with: journalctl --user -u jellyfin-inhibitor -f"
 fi
 
 # Test API key
@@ -116,7 +124,8 @@ echo -e "\nTesting Jellyfin API key..."
 response=$(curl -s "http://localhost:8096/Sessions?api_key=${API_KEY}")
 if echo "$response" | grep -q "forbidden\|unauthorized\|error"; then
     echo "Warning: API key test failed. Please verify your API key is correct."
-    echo "You can update it by editing /usr/local/bin/jellyfin-inhibitor.sh"
+    echo "You can update it by editing ~/.local/bin/jellyfin-inhibitor.sh"
 else
     echo "API key test successful!"
 fi
+EOL
