@@ -76,21 +76,104 @@ sudo systemctl restart jellyfin-inhibitor
 sudo nano /usr/local/bin/jellyfin-inhibitor.sh
 ```
 
-2. Copy the script content (see below) and make it executable:
+2. Copy and paste the following content into the file:
+```bash
+#!/bin/bash
+
+# Enable logging
+exec 1> >(logger -s -t $(basename $0)) 2>&1
+
+INHIBITOR_TAG="jellyfin-playback-inhibitor"
+
+check_jellyfin_playback() {
+    # Get active sessions from Jellyfin API
+    response=$(curl -s "http://localhost:8096/Sessions?api_key=YOUR_API_KEY")
+    
+    # Check for active video playback
+    if echo "$response" | grep -q '"IsPaused":false' && \
+       echo "$response" | grep -q '"PositionTicks":[1-9]' && \
+       echo "$response" | grep -q '"MediaType":"Video"'; then
+        return 0
+    fi
+    return 1
+}
+
+cleanup_inhibitors() {
+    # Kill all existing jellyfin inhibitors
+    pkill -f "systemd-inhibit.*$INHIBITOR_TAG"
+}
+
+create_inhibitor() {
+    # Only create if no inhibitor exists
+    if ! pgrep -f "systemd-inhibit.*$INHIBITOR_TAG" >/dev/null; then
+        systemd-inhibit --what=sleep:idle --who="Jellyfin" \
+                       --why="Media playback in progress" \
+                       --mode=block \
+                       bash -c "echo \$\$ > /tmp/$INHIBITOR_TAG.pid && exec sleep infinity" &
+        echo "Created new suspend inhibitor"
+    fi
+}
+
+# Cleanup on script exit
+trap cleanup_inhibitors EXIT
+
+# Main loop
+while true; do
+    if check_jellyfin_playback; then
+        echo "Active playback detected"
+        create_inhibitor
+    else
+        echo "No active playback"
+        cleanup_inhibitors
+    fi
+    sleep 30
+done
+```
+
+3. Update the API key:
+   - In the script you just created, find the line:
+     ```bash
+     response=$(curl -s "http://localhost:8096/Sessions?api_key=YOUR_API_KEY")
+     ```
+   - Replace `YOUR_API_KEY` with your actual Jellyfin API key
+   - Save the file (in nano: Ctrl+O, Enter, Ctrl+X)
+
+4. Make the script executable:
 ```bash
 sudo chmod +x /usr/local/bin/jellyfin-inhibitor.sh
 ```
 
-3. Create the systemd service:
+5. Create the systemd service file:
 ```bash
 sudo nano /etc/systemd/system/jellyfin-inhibitor.service
 ```
 
-4. Enable and start the service:
+6. Copy and paste the following content into the service file:
+```ini
+[Unit]
+Description=Jellyfin Suspend Inhibitor
+After=network.target jellyfin.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/jellyfin-inhibitor.sh
+Restart=always
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+7. Enable and start the service:
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable jellyfin-inhibitor
 sudo systemctl start jellyfin-inhibitor
+```
+
+8. Verify the service is running:
+```bash
+sudo systemctl status jellyfin-inhibitor
 ```
 
 ## Configuration
