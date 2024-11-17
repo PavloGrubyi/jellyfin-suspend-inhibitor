@@ -1,4 +1,4 @@
-# Jellyfin Suspend Inhibitor
+# Jellyfin Suspend Inhibitor for Linux
 
 A systemd service that prevents system suspension while Jellyfin media is playing. This is particularly useful for Jellyfin server installations where you want to prevent the system from going to sleep during remote playback.
 
