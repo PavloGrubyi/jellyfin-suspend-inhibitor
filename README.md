@@ -1,6 +1,6 @@
 # Jellyfin Suspend Inhibitor for Linux
 
-A systemd service that prevents system suspension while Jellyfin media is playing. This is particularly useful for Jellyfin server installations where you want to prevent the system from going to sleep during remote playback.
+A systemd user service that prevents system suspension while Jellyfin media is playing. This is particularly useful for Jellyfin server installations where you want to prevent the system from going to sleep during remote playback.
 
 ## Features
 
@@ -9,6 +9,8 @@ A systemd service that prevents system suspension while Jellyfin media is playin
 - Works with remote playback sessions
 - Minimal resource usage
 - Proper systemd integration
+- Runs without root privileges as a user service
+- Supports multiple users with individual configurations
 
 ## Prerequisites
 
@@ -49,33 +51,73 @@ curl -O https://raw.githubusercontent.com/PavloGrubyi/jellyfin-suspend-inhibitor
 chmod +x install.sh
 ```
 
-2. Run the installation script:
+2. Run the installation script as your normal user (NOT as root):
 ```bash
-sudo ./install.sh
+./install.sh
 ```
 
-3. Paste your Jellyfin API key when prompted.
+3. When prompted, enter your Jellyfin API key
 
-4. Restart the service:
+The script will:
+- Create necessary directories
+- Install the service for your user
+- Enable automatic startup
+- Start the service
+- Test the API key
+
+## Service Management
+
+Check service status:
 ```bash
-sudo systemctl restart jellyfin-inhibitor
+systemctl --user status jellyfin-inhibitor
+```
+
+View logs:
+```bash
+journalctl --user -u jellyfin-inhibitor -f
+```
+
+Stop the service:
+```bash
+systemctl --user stop jellyfin-inhibitor
+```
+
+Start the service:
+```bash
+systemctl --user start jellyfin-inhibitor
+```
+
+Disable service autostart:
+```bash
+systemctl --user disable jellyfin-inhibitor
+```
+
+Enable service autostart:
+```bash
+systemctl --user enable jellyfin-inhibitor
 ```
 
 ## Manual Installation
 
-1. Create the script file:
+1. Create necessary directories:
 ```bash
-sudo nano /usr/local/bin/jellyfin-inhibitor.sh
+mkdir -p ~/.local/bin
+mkdir -p ~/.config/systemd/user
 ```
 
-2. Copy and paste the following content into the file:
+2. Create the script file:
+```bash
+nano ~/.local/bin/jellyfin-inhibitor.sh
+```
+
+3. Copy and paste the following content into the file:
 ```bash
 #!/bin/bash
 
 # Enable logging
 exec 1> >(logger -s -t $(basename $0)) 2>&1
 
-INHIBITOR_TAG="jellyfin-playback-inhibitor"
+INHIBITOR_TAG="jellyfin-playback-inhibitor-$USER"
 
 check_jellyfin_playback() {
     # Get active sessions from Jellyfin API
@@ -91,14 +133,14 @@ check_jellyfin_playback() {
 }
 
 cleanup_inhibitors() {
-    # Kill all existing jellyfin inhibitors
+    # Kill all existing jellyfin inhibitors for this user
     pkill -f "systemd-inhibit.*$INHIBITOR_TAG"
 }
 
 create_inhibitor() {
     # Only create if no inhibitor exists
     if ! pgrep -f "systemd-inhibit.*$INHIBITOR_TAG" >/dev/null; then
-        systemd-inhibit --what=sleep:idle --who="Jellyfin" \
+        systemd-inhibit --what=sleep:idle --who="Jellyfin ($USER)" \
                        --why="Media playback in progress" \
                        --mode=block \
                        bash -c "echo \$\$ > /tmp/$INHIBITOR_TAG.pid && exec sleep infinity" &
@@ -122,7 +164,7 @@ while true; do
 done
 ```
 
-3. Update the API key:
+4. Update the API key:
    - In the script you just created, find the line:
      ```bash
      response=$(curl -s "http://localhost:8096/Sessions?api_key=YOUR_API_KEY")
@@ -130,42 +172,41 @@ done
    - Replace `YOUR_API_KEY` with your actual Jellyfin API key
    - Save the file (in nano: Ctrl+O, Enter, Ctrl+X)
 
-4. Make the script executable:
+5. Make the script executable:
 ```bash
-sudo chmod +x /usr/local/bin/jellyfin-inhibitor.sh
+chmod +x ~/.local/bin/jellyfin-inhibitor.sh
 ```
 
-5. Create the systemd service file:
+6. Create the systemd user service file:
 ```bash
-sudo nano /etc/systemd/system/jellyfin-inhibitor.service
+nano ~/.config/systemd/user/jellyfin-inhibitor.service
 ```
 
-6. Copy and paste the following content into the service file:
+7. Copy and paste the following content into the service file:
 ```ini
 [Unit]
 Description=Jellyfin Suspend Inhibitor
-After=network.target jellyfin.service
+After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/jellyfin-inhibitor.sh
+ExecStart=%h/.local/bin/jellyfin-inhibitor.sh
 Restart=always
-User=root
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
 ```
 
-7. Enable and start the service:
+8. Enable user service lingering (allows the service to run when user is not logged in):
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable jellyfin-inhibitor
-sudo systemctl start jellyfin-inhibitor
+loginctl enable-linger "$USER"
 ```
 
-8. Verify the service is running:
+9. Enable and start the service:
 ```bash
-sudo systemctl status jellyfin-inhibitor
+systemctl --user daemon-reload
+systemctl --user enable jellyfin-inhibitor
+systemctl --user start jellyfin-inhibitor
 ```
 
 ## Configuration
@@ -177,35 +218,18 @@ The script uses the following configuration:
 
 To modify these settings, edit the script file:
 ```bash
-sudo nano /usr/local/bin/jellyfin-inhibitor.sh
-```
-
-## Verification
-
-Check if the service is running:
-```bash
-sudo systemctl status jellyfin-inhibitor
-```
-
-View logs:
-```bash
-sudo journalctl -u jellyfin-inhibitor -f
-```
-
-List active inhibitors:
-```bash
-systemd-inhibit --list
+nano ~/.local/bin/jellyfin-inhibitor.sh
 ```
 
 ## Troubleshooting
 
 1. If the service isn't starting:
-   - Check the logs: `sudo journalctl -u jellyfin-inhibitor -f`
+   - Check the logs: `journalctl --user -u jellyfin-inhibitor -f`
    - Verify the API key is correct
    - Ensure Jellyfin is running and accessible
 
 2. If suspension isn't being prevented:
-   - Verify the service is running
+   - Verify the service is running: `systemctl --user status jellyfin-inhibitor`
    - Check if the inhibitor appears in the list: `systemd-inhibit --list`
    - Check the logs for playback detection
 
@@ -214,17 +238,17 @@ systemd-inhibit --list
    - Verify there are no spaces or extra characters when pasting the key
    - Ensure the API key has not been revoked in the Jellyfin dashboard
 
-4. Common API Key Errors:
-   - "401 Unauthorized": Invalid or expired API key
-   - "No response": Check if Jellyfin is running and the server address is correct
-   - "Connection refused": Check if the Jellyfin server address is correct
+4. If the service stops working after system reboot:
+   - Check if user lingering is enabled: `loginctl show-user $USER | grep Linger`
+   - If it shows "Linger=no", run: `loginctl enable-linger "$USER"`
 
 ## Security Considerations
 
-- The API key provides access to Jellyfin sessions information
+- The service runs entirely under user context without requiring root privileges
+- Each user can have their own instance of the service with their own API key
+- The API key provides access only to Jellyfin sessions information
 - Keep the API key secure and don't share it
-- The script runs as root but only accesses Jellyfin API and system sleep states
-- Consider using a dedicated API key for this service
+- The script only accesses Jellyfin API and system sleep states
 
 ## License
 
