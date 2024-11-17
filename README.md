@@ -54,15 +54,7 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-3. Configure your Jellyfin API key:
-```bash
-sudo nano /usr/local/bin/jellyfin-inhibitor.sh
-```
-Find the line:
-```bash
-response=$(curl -s "http://localhost:8096/Sessions?api_key=YOUR_API_KEY")
-```
-Replace `YOUR_API_KEY` with the API key you created earlier.
+3. Paste your Jellyfin API key when prompted.
 
 4. Restart the service:
 ```bash
