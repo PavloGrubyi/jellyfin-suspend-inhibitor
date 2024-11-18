@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Jellyfin Suspend Inhibitor Installer (User Level)
-# This script installs and configures the jellyfin suspend inhibitor service for the current user
-
 # Check if running as root (we don't want that)
 if [ "$EUID" -eq 0 ]; then
     echo "Please run this script as a normal user, not as root"
@@ -56,16 +53,28 @@ cleanup_inhibitors() {
 create_inhibitor() {
     # Only create if no inhibitor exists
     if ! pgrep -f "systemd-inhibit.*\$INHIBITOR_TAG" >/dev/null; then
-        systemd-inhibit --what=sleep:idle --who="Jellyfin (\$USER)" \\
+        # Enhanced inhibitor flags to prevent both manual and automatic suspend
+        systemd-inhibit --what=sleep:idle:handle-lid-switch:handle-power-key \\
+                       --who="Jellyfin (\$USER)" \\
                        --why="Media playback in progress" \\
                        --mode=block \\
                        bash -c "echo \\\$\\\$ > /tmp/\$INHIBITOR_TAG.pid && exec sleep infinity" &
+        
+        # Also prevent automatic suspend via gsettings
+        gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'nothing'
+        gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'nothing'
         echo "Created new suspend inhibitor"
     fi
 }
 
+restore_power_settings() {
+    # Restore default power settings
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-ac-type 'suspend'
+    gsettings set org.gnome.settings-daemon.plugins.power sleep-inactive-battery-type 'suspend'
+}
+
 # Cleanup on script exit
-trap cleanup_inhibitors EXIT
+trap 'cleanup_inhibitors; restore_power_settings' EXIT
 
 # Main loop
 while true; do
@@ -75,6 +84,7 @@ while true; do
     else
         echo "No active playback"
         cleanup_inhibitors
+        restore_power_settings
     fi
     sleep 30
 done
@@ -128,4 +138,3 @@ if echo "$response" | grep -q "forbidden\|unauthorized\|error"; then
 else
     echo "API key test successful!"
 fi
-EOL
